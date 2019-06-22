@@ -47,3 +47,5 @@ TODO:
 6. middleware?
 
 7. regex?
+
+8. catch_all must be the last one ✔

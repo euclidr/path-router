@@ -1,5 +1,24 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::default::Default;
+use std::error;
+use std::fmt;
+
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    InvalidFormat,
+    RouteConflict,
+}
+
+impl error::Error for Error {}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::InvalidFormat => write!(f, "invalid format"),
+            Error::RouteConflict => write!(f, "route conflict"),
+        }
+    }
+}
 
 enum NodeKind {
     Static,
@@ -59,10 +78,6 @@ impl<T> Node<T> {
         }
     }
 
-    // fn child_from_segment(&mut self, segment: &str) -> Option<&mut Node<T>> {
-    //     unimplemented!()
-    // }
-
     fn child_index(&self, segment: &str) -> Option<usize> {
         if let Ok(i) = self.normal_children.binary_search_by(|n| {
             let name = &(n.name)[..];
@@ -74,14 +89,11 @@ impl<T> Node<T> {
     }
 
     fn will_conflit(&self, segment: &str) -> bool {
-        if segment.starts_with(':') {
-            if self.catch_all_child.is_some() {
-                return true;
-            }
-        } else if segment.starts_with('*') {
-            if self.param_child.is_some() {
-                return true;
-            }
+        if segment.starts_with(':') && self.catch_all_child.is_some() {
+            return true;
+        }
+        if segment.starts_with('*') && self.param_child.is_some() {
+            return true;
         }
 
         false
@@ -95,41 +107,43 @@ impl<T> Node<T> {
         }
     }
 
-    fn add_segment(&mut self, segment: &str) -> Result<&mut Node<T>, String> {
+    fn add_segment(&mut self, segment: &str) -> Result<&mut Node<T>, Error> {
         if self.will_conflit(segment) {
-            return Err("conflit".to_string());
+            return Err(Error::RouteConflict);
         }
 
         if segment.starts_with(':') {
-            match *self.param_child {
-                Some(ref mut n) => return Ok(n),
+            return match *self.param_child {
+                Some(ref mut n) => Ok(n),
                 None => {
                     self.param_child = Box::new(Some(Node::new_param()));
-                    if let Some(ref mut n) = *self.param_child {
-                        return Ok(n);
+                    match *self.param_child {
+                        Some(ref mut n) => Ok(n),
+                        None => panic!("impossible"),
                     }
                 }
-            }
-        } else if segment.starts_with('*') {
-            match *self.catch_all_child {
+            };
+        }
+
+        if segment.starts_with('*') {
+            return match *self.catch_all_child {
                 Some(ref mut n) => return Ok(n),
                 None => {
                     self.catch_all_child = Box::new(Some(Node::new_cache_all()));
-                    if let Some(ref mut n) = *self.catch_all_child {
-                        return Ok(n);
+                    match *self.catch_all_child {
+                        Some(ref mut n) => Ok(n),
+                        None => panic!("impossible"),
                     }
                 }
-            }
-        } else {
-            if self.child_index(segment).is_none() {
-                self.normal_children.push(Node::new_normal(segment));
-                self.normal_children.sort_by(|a, b| a.name.cmp(&b.name))
-            }
-            let idx = self.child_index(segment).unwrap();
-            return Ok(&mut self.normal_children[idx]);
+            };
         }
 
-        Err("impossible".to_string())
+        if self.child_index(segment).is_none() {
+            self.normal_children.push(Node::new_normal(segment));
+            self.normal_children.sort_by(|a, b| a.name.cmp(&b.name))
+        }
+        let idx = self.child_index(segment).unwrap();
+        return Ok(&mut self.normal_children[idx]);
     }
 
     fn set_data(&mut self, data: T) {
@@ -171,8 +185,9 @@ impl<T> Router<T> {
 
         let path = &path[1..];
         let mut checker = BTreeSet::new();
+        let mut has_catch_all = false;
         for segment in path.split('/') {
-            if segment.len() == 0 {
+            if segment.len() == 0 || has_catch_all {
                 return false;
             }
             if segment.starts_with(':') || segment.starts_with('*') {
@@ -185,13 +200,17 @@ impl<T> Router<T> {
                 }
                 checker.insert(&segment[1..]);
             }
+
+            if segment.starts_with('*') {
+                has_catch_all = true
+            }
         }
 
         return true;
     }
-    pub fn add(&mut self, path: &str, data: T) {
+    pub fn add(&mut self, path: &str, data: T) -> Result<&mut T, Error> {
         if !self.is_route_valid(path) {
-            panic!("invalid route path")
+            return Err(Error::InvalidFormat);
         }
 
         let path = &path[1..];
@@ -213,7 +232,7 @@ impl<T> Router<T> {
                     }
                     r
                 }
-                Err(_) => return,
+                Err(err) => return Err(err),
             };
         }
 
@@ -221,10 +240,14 @@ impl<T> Router<T> {
         if params.len() > 0 && last.params.len() == 0 {
             last.params = params;
         } else if params != last.params {
-            panic!("params conflict")
+            return Err(Error::RouteConflict);
         }
 
         last.set_data(data);
+        match last.data {
+            Some(ref mut d) => Ok(d),
+            None => panic!("impossible"),
+        }
     }
 
     pub fn recognize<'a>(&'a self, path: &str) -> Option<Match<&'a T>> {
@@ -305,8 +328,8 @@ mod tests {
         const ROUTES: [&'static str; 10] = [
             "/",
             "/users",
-            "/users/:user_id",
-            "/users/:user_id/:org",
+            "/users/:id",
+            "/users/:id/:org",
             "/users/:user_id/repos",
             "/users/:user_id/repos/:id",
             "/users/:user_id/repos/:id/*any",
@@ -325,14 +348,14 @@ mod tests {
             ("/", true, 0, vec![]),
             ("/users", true, 1, vec![]),
             ("/users/", true, 1, vec![]),
-            ("/users/42", true, 2, vec![("user_id", "42")]),
-            ("/users/四十二", true, 2, vec![("user_id", "四十二")]),
-            ("/users/****", true, 2, vec![("user_id", "****")]),
+            ("/users/42", true, 2, vec![("id", "42")]),
+            ("/users/四十二", true, 2, vec![("id", "四十二")]),
+            ("/users/****", true, 2, vec![("id", "****")]),
             (
                 "/users/42/ruster",
                 true,
                 3,
-                vec![("user_id", "42"), ("org", "ruster")],
+                vec![("id", "42"), ("org", "ruster")],
             ),
             ("/users/42/repos", true, 4, vec![("user_id", "42")]),
             ("/users/42/repos/", true, 4, vec![("user_id", "42")]),
@@ -398,6 +421,44 @@ mod tests {
                 }
             } else {
                 assert!(router.recognize(*path).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_routes() {
+        let checks = vec![
+            ("/dup/:id/:id", false, vec![]),
+            ("/double_slash//a", false, vec![]),
+            ("/double_slash///a", false, vec![]),
+            ("/trailing_slash/", false, vec![]),
+            ("/empty_param/:", false, vec![]),
+            ("/empty_param/:/a", false, vec![]),
+            ("/empty_catch_all/*", false, vec![]),
+            ("/different_param_name/:a", true, vec!["a"]),
+            ("/different_param_name/:b", false, vec![]),
+            ("/different_param_name/:b/:c", true, vec!["b", "c"]),
+            ("/different_param_name/:a/:d", false, vec![]),
+            ("/different_param_name/:a/:d/*e", true, vec!["a", "d", "e"]),
+            ("/catch_all_not_the_last/*a/extra", false, vec![]),
+        ];
+
+        let mut router = Router::default();
+
+        for (route, valid, keys) in checks.iter() {
+            let rs = router.add(*route, 1);
+            if *valid {
+                assert_eq!(*rs.unwrap(), 1);
+                match router.recognize(*route) {
+                    None => panic!("failed to recognize {}", *route),
+                    Some(Match {data: _, params}) => {
+                        for k in keys.iter() {
+                            assert!(params.get(*k).is_some(), "miss capturing param: {}", *k)
+                        }
+                    }
+                }
+            } else {
+                assert!(rs.is_err());
             }
         }
     }
