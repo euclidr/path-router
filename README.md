@@ -4,7 +4,7 @@ a simple path routing table
 
 TODO:
 
-1. support different wildcard name like
+1. support different wildcard name like ✔
 
     ```
     /user/:id
@@ -20,7 +20,7 @@ TODO:
 
     should not be permitted
 
-2. prevent same wildcard name in a single route:
+2. prevent same wildcard name in a single route: ✔
 
     ```
     /user/:id/repo/:id // not allowed
@@ -45,3 +45,5 @@ TODO:
 5. benchmark
 
 6. middleware?
+
+7. regex?

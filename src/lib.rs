@@ -1,15 +1,15 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::default::Default;
 
 enum NodeKind {
-    Normal,
+    Static,
     Param,
     CatchAll,
 }
 
 impl Default for NodeKind {
     fn default() -> NodeKind {
-        NodeKind::Normal
+        NodeKind::Static
     }
 }
 
@@ -17,6 +17,7 @@ struct Node<T> {
     kind: NodeKind,
     name: String,
     data: Option<T>,
+    params: Vec<String>,
     normal_children: Vec<Node<T>>,
     param_child: Box<Option<Node<T>>>,
     catch_all_child: Box<Option<Node<T>>>,
@@ -28,6 +29,7 @@ impl<T> Default for Node<T> {
             kind: NodeKind::default(),
             name: String::from(""),
             data: None,
+            params: vec![],
             normal_children: vec![],
             param_child: Box::new(None),
             catch_all_child: Box::new(None),
@@ -43,18 +45,16 @@ impl<T> Node<T> {
         }
     }
 
-    fn new_param(segment: &str) -> Node<T> {
+    fn new_param() -> Node<T> {
         Node {
             kind: NodeKind::Param,
-            name: segment.to_string(),
             ..Node::default()
         }
     }
 
-    fn new_cache_all(segment: &str) -> Node<T> {
+    fn new_cache_all() -> Node<T> {
         Node {
             kind: NodeKind::CatchAll,
-            name: segment.to_string(),
             ..Node::default()
         }
     }
@@ -78,25 +78,21 @@ impl<T> Node<T> {
             if self.catch_all_child.is_some() {
                 return true;
             }
-            let segment = &segment[1..];
-            return match *self.param_child {
-                Some(ref n) if n.name == segment => false,
-                None => false,
-                _ => true,
-            };
         } else if segment.starts_with('*') {
             if self.param_child.is_some() {
                 return true;
             }
-            let segment = &segment[1..];
-            return match *self.catch_all_child {
-                Some(ref n) if n.name == segment => false,
-                None => false,
-                _ => true,
-            };
         }
 
         false
+    }
+
+    fn param_name(&self, segment: &str) -> Option<String> {
+        if segment.starts_with(':') || segment.starts_with('*') {
+            Some(String::from(&segment[1..]))
+        } else {
+            None
+        }
     }
 
     fn add_segment(&mut self, segment: &str) -> Result<&mut Node<T>, String> {
@@ -105,22 +101,20 @@ impl<T> Node<T> {
         }
 
         if segment.starts_with(':') {
-            let segment = &segment[1..];
             match *self.param_child {
                 Some(ref mut n) => return Ok(n),
                 None => {
-                    self.param_child = Box::new(Some(Node::new_param(segment)));
+                    self.param_child = Box::new(Some(Node::new_param()));
                     if let Some(ref mut n) = *self.param_child {
                         return Ok(n);
                     }
                 }
             }
         } else if segment.starts_with('*') {
-            let segment = &segment[1..];
             match *self.catch_all_child {
                 Some(ref mut n) => return Ok(n),
                 None => {
-                    self.catch_all_child = Box::new(Some(Node::new_cache_all(segment)));
+                    self.catch_all_child = Box::new(Some(Node::new_cache_all()));
                     if let Some(ref mut n) = *self.catch_all_child {
                         return Ok(n);
                     }
@@ -162,21 +156,47 @@ impl<T> Default for Router<T> {
 }
 
 impl<T> Router<T> {
-    pub fn add(&mut self, path: &str, data: T) {
+    fn is_route_valid(&self, path: &str) -> bool {
         if !path.starts_with('/') {
-            panic!("path schema must start with /");
+            return false;
         }
 
         if path.len() > 1 && path.ends_with('/') {
-            panic!("path schema must not end with /");
+            return false;
         }
 
-        if path.contains("//") {
-            panic!("invalid path schema");
+        if path.len() == 1 {
+            return true;
+        }
+
+        let path = &path[1..];
+        let mut checker = BTreeSet::new();
+        for segment in path.split('/') {
+            if segment.len() == 0 {
+                return false;
+            }
+            if segment.starts_with(':') || segment.starts_with('*') {
+                if segment.len() == 1 {
+                    return false;
+                }
+                let name = &segment[1..];
+                if checker.contains(name) {
+                    return false;
+                }
+                checker.insert(&segment[1..]);
+            }
+        }
+
+        return true;
+    }
+    pub fn add(&mut self, path: &str, data: T) {
+        if !self.is_route_valid(path) {
+            panic!("invalid route path")
         }
 
         let path = &path[1..];
         let mut last = &mut self.root;
+        let mut params = vec![];
         for segment in path.split('/') {
             if segment.len() == 0 {
                 break;
@@ -184,9 +204,24 @@ impl<T> Router<T> {
 
             let rs = last.add_segment(segment);
             last = match rs {
-                Ok(r) => r,
+                Ok(r) => {
+                    match r.kind {
+                        NodeKind::Param | NodeKind::CatchAll => {
+                            params.push(r.param_name(segment).unwrap());
+                        }
+                        NodeKind::Static => (),
+                    }
+                    r
+                }
                 Err(_) => return,
             };
+        }
+
+        // refine codes here
+        if params.len() > 0 && last.params.len() == 0 {
+            last.params = params;
+        } else if params != last.params {
+            panic!("params conflict")
         }
 
         last.set_data(data);
@@ -208,7 +243,7 @@ impl<T> Router<T> {
         let mut last = &self.root;
         let mut is_catching_all = false;
         let mut catch_all = String::from("");
-        let mut params = BTreeMap::<String, String>::new();
+        let mut values = vec![];
         let path = &path[1..];
         for segment in path.split('/') {
             if is_catching_all {
@@ -227,7 +262,7 @@ impl<T> Router<T> {
             }
 
             if let Some(ref node) = *last.param_child {
-                params.insert(node.name.clone(), String::from(segment));
+                values.push(segment);
                 last = node;
                 continue;
             }
@@ -245,11 +280,17 @@ impl<T> Router<T> {
         }
 
         if is_catching_all {
-            params.insert(last.name.clone(), catch_all);
+            values.push(catch_all.as_str())
         }
 
         match last.data {
-            Some(ref data) => Some(Match { data, params }),
+            Some(ref data) => {
+                let mut params = BTreeMap::<String, String>::new();
+                for (k, v) in last.params.iter().zip(values) {
+                    params.insert(k.clone(), String::from(v));
+                }
+                Some(Match { data, params })
+            }
             None => None,
         }
     }
@@ -287,15 +328,50 @@ mod tests {
             ("/users/42", true, 2, vec![("user_id", "42")]),
             ("/users/四十二", true, 2, vec![("user_id", "四十二")]),
             ("/users/****", true, 2, vec![("user_id", "****")]),
-            ("/users/42/ruster", true, 3, vec![("user_id", "42"), ("org", "ruster")]),
+            (
+                "/users/42/ruster",
+                true,
+                3,
+                vec![("user_id", "42"), ("org", "ruster")],
+            ),
             ("/users/42/repos", true, 4, vec![("user_id", "42")]),
             ("/users/42/repos/", true, 4, vec![("user_id", "42")]),
-            ("/users/42/repos/12", true, 5, vec![("user_id", "42"), ("id", "12")]),
-            ("/users/42/repos/12/", true, 5, vec![("user_id", "42"), ("id", "12")]),
-            ("/users/42/repos/12/x", true, 6, vec![("user_id", "42"), ("id", "12"), ("any", "x")]),
-            ("/users/42/repos/12/x/y/z", true, 6, vec![("user_id", "42"), ("id", "12"), ("any", "x/y/z")]),
-            ("/users/42/repos/12/x/y/z/", true, 6, vec![("user_id", "42"), ("id", "12"), ("any", "x/y/z/")]),
-            ("/users/42/repos/12/x/山口山/z", true, 6, vec![("user_id", "42"), ("id", "12"), ("any", "x/山口山/z")]),
+            (
+                "/users/42/repos/12",
+                true,
+                5,
+                vec![("user_id", "42"), ("id", "12")],
+            ),
+            (
+                "/users/42/repos/12/",
+                true,
+                5,
+                vec![("user_id", "42"), ("id", "12")],
+            ),
+            (
+                "/users/42/repos/12/x",
+                true,
+                6,
+                vec![("user_id", "42"), ("id", "12"), ("any", "x")],
+            ),
+            (
+                "/users/42/repos/12/x/y/z",
+                true,
+                6,
+                vec![("user_id", "42"), ("id", "12"), ("any", "x/y/z")],
+            ),
+            (
+                "/users/42/repos/12/x/y/z/",
+                true,
+                6,
+                vec![("user_id", "42"), ("id", "12"), ("any", "x/y/z/")],
+            ),
+            (
+                "/users/42/repos/12/x/山口山/z",
+                true,
+                6,
+                vec![("user_id", "42"), ("id", "12"), ("any", "x/山口山/z")],
+            ),
             ("/about", true, 7, vec![]),
             ("/about/us", true, 8, vec![]),
             ("/somebody", true, 9, vec![("username", "somebody")]),
