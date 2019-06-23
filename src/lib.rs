@@ -38,7 +38,6 @@ struct Match<T> {
     params: BTreeMap<String, String>,
 }
 
-
 struct Router<T> {
     kind: NodeKind,
     name: String,
@@ -174,11 +173,11 @@ impl<T> Router<T> {
             return false;
         }
 
-        return true
+        return true;
     }
     fn is_valid_route(&self, route: &str) -> bool {
         if !self.is_route_in_good_shape(route) {
-            return false
+            return false;
         }
 
         if route.len() == 1 {
@@ -213,7 +212,7 @@ impl<T> Router<T> {
 
     fn is_valid_base(&self, route: &str) -> bool {
         if !self.is_route_in_good_shape(route) {
-            return false
+            return false;
         }
 
         if route.len() == 1 {
@@ -276,7 +275,7 @@ impl<T> Router<T> {
 
     pub fn with_base(&mut self, route: &str) -> Result<&mut Router<T>, Error> {
         if !self.is_valid_base(route) {
-            return Err(Error::InvalidFormat)
+            return Err(Error::InvalidFormat);
         }
 
         let path = &route[1..];
@@ -473,7 +472,6 @@ mod tests {
         let mut router = Router::default();
         build_simple_router(&mut router);
         check_with_base(&router, "");
-
     }
 
     #[test]
@@ -502,7 +500,7 @@ mod tests {
                 assert_eq!(*rs.unwrap(), 1);
                 match router.recognize(*route) {
                     None => panic!("failed to recognize {}", *route),
-                    Some(Match {data: _, params}) => {
+                    Some(Match { data: _, params }) => {
                         for k in keys.iter() {
                             assert!(params.get(*k).is_some(), "miss capturing param: {}", *k)
                         }
@@ -528,7 +526,6 @@ mod tests {
             }
             check_with_base(admin, "");
             check_with_base(admin, "/console");
-
         }
         check_with_base(&router, "");
         check_with_base(&router, "/admin");
