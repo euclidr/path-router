@@ -50,4 +50,4 @@ TODO:
 
 8. catch_all must be the last one ✔
 
-9. display routes
+9. display routes ✔

@@ -62,6 +62,12 @@ impl<T> Default for Router<T> {
     }
 }
 
+impl<T> std::fmt::Debug for Router<T> {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unimplemented!()
+    }
+}
+
 // Router as node
 impl<T> Router<T> {
     pub fn new() -> Router<T> {
@@ -164,72 +170,7 @@ impl<T> Router<T> {
 
 /// Router as router
 impl<T> Router<T> {
-    fn is_route_in_good_shape(&self, route: &str) -> bool {
-        if !route.starts_with('/') {
-            return false;
-        }
 
-        if route.len() > 1 && route.ends_with('/') {
-            return false;
-        }
-
-        return true;
-    }
-    fn is_valid_route(&self, route: &str) -> bool {
-        if !self.is_route_in_good_shape(route) {
-            return false;
-        }
-
-        if route.len() == 1 {
-            return true;
-        }
-
-        let path = &route[1..];
-        let mut checker = BTreeSet::new();
-        let mut has_catch_all = false;
-        for segment in path.split('/') {
-            if segment.len() == 0 || has_catch_all {
-                return false;
-            }
-            if segment.starts_with(':') || segment.starts_with('*') {
-                if segment.len() == 1 {
-                    return false;
-                }
-                let name = &segment[1..];
-                if checker.contains(name) {
-                    return false;
-                }
-                checker.insert(&segment[1..]);
-            }
-
-            if segment.starts_with('*') {
-                has_catch_all = true
-            }
-        }
-
-        return true;
-    }
-
-    fn is_valid_base(&self, route: &str) -> bool {
-        if !self.is_route_in_good_shape(route) {
-            return false;
-        }
-
-        if route.len() == 1 {
-            return true;
-        }
-
-        let path = &route[1..];
-        for segment in path.split('/') {
-            if segment.len() == 0 {
-                return false;
-            }
-            if segment.starts_with(':') || segment.starts_with('*') {
-                return false;
-            }
-        }
-        true
-    }
 
     pub fn add(&mut self, route: &str, data: T) -> Result<&mut T, Error> {
         if !self.is_valid_route(route) {
@@ -358,6 +299,122 @@ impl<T> Router<T> {
             }
             None => None,
         }
+    }
+
+    pub fn list_routes(&self) -> Vec<String> {
+        self.list_sub_routes(&vec![])
+    }
+
+    fn combine_route_parts(&self, parts: &Vec<String>, params: &Vec<String>) -> String {
+        if parts.len() == 1 && parts[0] == "" {
+            return String::from("/");
+        }
+
+        let mut i = 0;
+        let mut parts = parts.clone();
+        for part in parts.iter_mut() {
+            if part == ":" || part == "*" {
+                *part = format!("{}{}", part, params[i]);
+                i = i + 1;
+                continue;
+            }
+        }
+        parts.join("/")
+    }
+
+    fn list_sub_routes(&self, pre: &Vec<String>) -> Vec<String> {
+        let mut result = vec![];
+        let mut cur = pre.clone();
+        match self.kind {
+            NodeKind::Static => cur.push(self.name.clone()),
+            NodeKind::Param => cur.push(String::from(":")),
+            NodeKind::CatchAll => cur.push(String::from("*")),
+        }
+
+        if self.data.is_some() {
+            result.push(self.combine_route_parts(&cur, &self.params))
+        }
+
+        for node in self.normal_children.iter() {
+            result.append(&mut node.list_sub_routes(&cur));
+        }
+
+        if let Some(ref node) = *self.param_child {
+            result.append(&mut node.list_sub_routes(&cur));
+        }
+
+        if let Some(ref node) = *self.catch_all_child {
+            result.append(&mut node.list_sub_routes(&cur));
+        }
+
+        result
+    }
+
+    fn is_route_in_good_shape(&self, route: &str) -> bool {
+        if !route.starts_with('/') {
+            return false;
+        }
+
+        if route.len() > 1 && route.ends_with('/') {
+            return false;
+        }
+
+        return true;
+    }
+    fn is_valid_route(&self, route: &str) -> bool {
+        if !self.is_route_in_good_shape(route) {
+            return false;
+        }
+
+        if route.len() == 1 {
+            return true;
+        }
+
+        let path = &route[1..];
+        let mut checker = BTreeSet::new();
+        let mut has_catch_all = false;
+        for segment in path.split('/') {
+            if segment.len() == 0 || has_catch_all {
+                return false;
+            }
+            if segment.starts_with(':') || segment.starts_with('*') {
+                if segment.len() == 1 {
+                    return false;
+                }
+                let name = &segment[1..];
+                if checker.contains(name) {
+                    return false;
+                }
+                checker.insert(&segment[1..]);
+            }
+
+            if segment.starts_with('*') {
+                has_catch_all = true
+            }
+        }
+
+        return true;
+    }
+
+    fn is_valid_base(&self, route: &str) -> bool {
+        if !self.is_route_in_good_shape(route) {
+            return false;
+        }
+
+        if route.len() == 1 {
+            return true;
+        }
+
+        let path = &route[1..];
+        for segment in path.split('/') {
+            if segment.len() == 0 {
+                return false;
+            }
+            if segment.starts_with(':') || segment.starts_with('*') {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -530,5 +587,12 @@ mod tests {
         check_with_base(&router, "");
         check_with_base(&router, "/admin");
         check_with_base(&router, "/admin/console");
+    }
+
+    #[test]
+    fn display_routes() {
+        let mut router = Router::default();
+        build_simple_router(&mut router);
+        println!("{:?}", router.list_routes())
     }
 }
