@@ -32,19 +32,26 @@ impl Default for NodeKind {
     }
 }
 
-struct Node<T> {
+#[derive(Debug)]
+struct Match<T> {
+    data: T,
+    params: BTreeMap<String, String>,
+}
+
+
+struct Router<T> {
     kind: NodeKind,
     name: String,
     data: Option<T>,
     params: Vec<String>,
-    normal_children: Vec<Node<T>>,
-    param_child: Box<Option<Node<T>>>,
-    catch_all_child: Box<Option<Node<T>>>,
+    normal_children: Vec<Router<T>>,
+    param_child: Box<Option<Router<T>>>,
+    catch_all_child: Box<Option<Router<T>>>,
 }
 
-impl<T> Default for Node<T> {
-    fn default() -> Node<T> {
-        Node::<T> {
+impl<T> Default for Router<T> {
+    fn default() -> Router<T> {
+        Router::<T> {
             kind: NodeKind::default(),
             name: String::from(""),
             data: None,
@@ -56,25 +63,30 @@ impl<T> Default for Node<T> {
     }
 }
 
-impl<T> Node<T> {
-    fn new_normal(segment: &str) -> Node<T> {
-        Node {
+// Router as node
+impl<T> Router<T> {
+    pub fn new() -> Router<T> {
+        Router::default()
+    }
+
+    fn new_static_node(segment: &str) -> Router<T> {
+        Router {
             name: segment.to_string(),
-            ..Node::default()
+            ..Router::default()
         }
     }
 
-    fn new_param() -> Node<T> {
-        Node {
+    fn new_param_node() -> Router<T> {
+        Router {
             kind: NodeKind::Param,
-            ..Node::default()
+            ..Router::default()
         }
     }
 
-    fn new_cache_all() -> Node<T> {
-        Node {
+    fn new_cache_all_node() -> Router<T> {
+        Router {
             kind: NodeKind::CatchAll,
-            ..Node::default()
+            ..Router::default()
         }
     }
 
@@ -107,7 +119,7 @@ impl<T> Node<T> {
         }
     }
 
-    fn add_segment(&mut self, segment: &str) -> Result<&mut Node<T>, Error> {
+    fn add_segment(&mut self, segment: &str) -> Result<&mut Router<T>, Error> {
         if self.will_conflit(segment) {
             return Err(Error::RouteConflict);
         }
@@ -116,7 +128,7 @@ impl<T> Node<T> {
             return match *self.param_child {
                 Some(ref mut n) => Ok(n),
                 None => {
-                    self.param_child = Box::new(Some(Node::new_param()));
+                    self.param_child = Box::new(Some(Router::new_param_node()));
                     match *self.param_child {
                         Some(ref mut n) => Ok(n),
                         None => panic!("impossible"),
@@ -129,7 +141,7 @@ impl<T> Node<T> {
             return match *self.catch_all_child {
                 Some(ref mut n) => return Ok(n),
                 None => {
-                    self.catch_all_child = Box::new(Some(Node::new_cache_all()));
+                    self.catch_all_child = Box::new(Some(Router::new_cache_all_node()));
                     match *self.catch_all_child {
                         Some(ref mut n) => Ok(n),
                         None => panic!("impossible"),
@@ -139,7 +151,7 @@ impl<T> Node<T> {
         }
 
         if self.child_index(segment).is_none() {
-            self.normal_children.push(Node::new_normal(segment));
+            self.normal_children.push(Router::new_static_node(segment));
             self.normal_children.sort_by(|a, b| a.name.cmp(&b.name))
         }
         let idx = self.child_index(segment).unwrap();
@@ -151,39 +163,29 @@ impl<T> Node<T> {
     }
 }
 
-#[derive(Debug)]
-struct Match<T> {
-    data: T,
-    params: BTreeMap<String, String>,
-}
-
-struct Router<T> {
-    root: Node<T>,
-}
-
-impl<T> Default for Router<T> {
-    fn default() -> Router<T> {
-        Router {
-            root: Node::default(),
-        }
-    }
-}
-
+/// Router as router
 impl<T> Router<T> {
-    fn is_route_valid(&self, path: &str) -> bool {
-        if !path.starts_with('/') {
+    fn is_route_in_good_shape(&self, route: &str) -> bool {
+        if !route.starts_with('/') {
             return false;
         }
 
-        if path.len() > 1 && path.ends_with('/') {
+        if route.len() > 1 && route.ends_with('/') {
             return false;
         }
 
-        if path.len() == 1 {
+        return true
+    }
+    fn is_valid_route(&self, route: &str) -> bool {
+        if !self.is_route_in_good_shape(route) {
+            return false
+        }
+
+        if route.len() == 1 {
             return true;
         }
 
-        let path = &path[1..];
+        let path = &route[1..];
         let mut checker = BTreeSet::new();
         let mut has_catch_all = false;
         for segment in path.split('/') {
@@ -208,13 +210,35 @@ impl<T> Router<T> {
 
         return true;
     }
-    pub fn add(&mut self, path: &str, data: T) -> Result<&mut T, Error> {
-        if !self.is_route_valid(path) {
+
+    fn is_valid_base(&self, route: &str) -> bool {
+        if !self.is_route_in_good_shape(route) {
+            return false
+        }
+
+        if route.len() == 1 {
+            return true;
+        }
+
+        let path = &route[1..];
+        for segment in path.split('/') {
+            if segment.len() == 0 {
+                return false;
+            }
+            if segment.starts_with(':') || segment.starts_with('*') {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn add(&mut self, route: &str, data: T) -> Result<&mut T, Error> {
+        if !self.is_valid_route(route) {
             return Err(Error::InvalidFormat);
         }
 
-        let path = &path[1..];
-        let mut last = &mut self.root;
+        let path = &route[1..];
+        let mut last = self;
         let mut params = vec![];
         for segment in path.split('/') {
             if segment.len() == 0 {
@@ -250,6 +274,25 @@ impl<T> Router<T> {
         }
     }
 
+    pub fn with_base(&mut self, route: &str) -> Result<&mut Router<T>, Error> {
+        if !self.is_valid_base(route) {
+            return Err(Error::InvalidFormat)
+        }
+
+        let path = &route[1..];
+        let mut last = self;
+        for segment in path.split('/') {
+            if segment.len() == 0 {
+                break;
+            }
+
+            let rs = last.add_segment(segment);
+            last = rs.unwrap();
+        }
+
+        Ok(last)
+    }
+
     pub fn recognize<'a>(&'a self, path: &str) -> Option<Match<&'a T>> {
         let path = {
             if path == "" {
@@ -263,7 +306,7 @@ impl<T> Router<T> {
             return None;
         }
 
-        let mut last = &self.root;
+        let mut last = self;
         let mut is_catching_all = false;
         let mut catch_all = String::from("");
         let mut values = vec![];
@@ -323,8 +366,7 @@ impl<T> Router<T> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn simple_router() {
+    fn build_simple_router(router: &mut Router<usize>) {
         const ROUTES: [&'static str; 10] = [
             "/",
             "/users",
@@ -338,12 +380,12 @@ mod tests {
             "/:username",
         ];
 
-        let mut router = Router::default();
-
         for (i, route) in ROUTES.iter().enumerate() {
-            router.add(route, i);
+            router.add(route, i).unwrap();
         }
+    }
 
+    fn check_with_base(router: &Router<usize>, base: &str) {
         let checks = vec![
             ("/", true, 0, vec![]),
             ("/users", true, 1, vec![]),
@@ -410,8 +452,9 @@ mod tests {
         ];
 
         for (path, exist, val, param) in checks.iter() {
+            let path_string = format!("{}{}", base, *path);
             if *exist {
-                let m = router.recognize(*path).unwrap();
+                let m = router.recognize(&path_string).unwrap();
                 assert_eq!(m.data, val);
                 for (k, v) in param {
                     match m.params.get(*k) {
@@ -420,9 +463,17 @@ mod tests {
                     }
                 }
             } else {
-                assert!(router.recognize(*path).is_none());
+                assert!(router.recognize(&path_string).is_none());
             }
         }
+    }
+
+    #[test]
+    fn simple_router() {
+        let mut router = Router::default();
+        build_simple_router(&mut router);
+        check_with_base(&router, "");
+
     }
 
     #[test]
@@ -461,5 +512,26 @@ mod tests {
                 assert!(rs.is_err());
             }
         }
+    }
+
+    #[test]
+    fn base_route() {
+        let mut router = Router::default();
+        build_simple_router(&mut router);
+        {
+            let admin = router.with_base("/admin").unwrap();
+            build_simple_router(admin);
+            {
+                let console = admin.with_base("/console").unwrap();
+                build_simple_router(console);
+                check_with_base(console, "");
+            }
+            check_with_base(admin, "");
+            check_with_base(admin, "/console");
+
+        }
+        check_with_base(&router, "");
+        check_with_base(&router, "/admin");
+        check_with_base(&router, "/admin/console");
     }
 }

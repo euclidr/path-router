@@ -33,12 +33,12 @@ TODO:
     //a/bb/a/..// => /a/bb
     ```
 
-4. route can be chained
+4. route can be chained ✔
 
     ```
-    admin = route.add_base("/admin")
+    admin = route.with_base("/admin")
     admin.add("/", endpoint)
-    dashboard = admin.add_base("/dashboard")
+    dashboard = admin.with_base("/dashboard")
     dashboard.add("/temprature, endpoint)
     ```
 
@@ -49,3 +49,5 @@ TODO:
 7. regex?
 
 8. catch_all must be the last one ✔
+
+9. display routes
