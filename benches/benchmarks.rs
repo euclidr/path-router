@@ -78,6 +78,7 @@ fn bench_recognize(c: &mut Criterion) {
     );
 }
 
+// inspired by path-tree https://github.com/trek-rs/path-tree/blob/master/benches/routers.rs
 fn bench_path_insert(c: &mut Criterion) {
     c.bench(
         "path_insert",
@@ -125,6 +126,7 @@ fn bench_path_insert(c: &mut Criterion) {
     );
 }
 
+// inspired by path-tree https://github.com/trek-rs/path-tree/blob/master/benches/routers.rs
 fn bench_path_find(c: &mut Criterion) {
     c.bench(
         "path_find",
