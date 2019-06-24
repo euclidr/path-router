@@ -398,6 +398,7 @@ impl<T> Router<T> {
 
         return true;
     }
+
     fn is_valid_route(&self, route: &str) -> bool {
         if !self.is_route_in_good_shape(route) {
             return false;

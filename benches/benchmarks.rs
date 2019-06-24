@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate criterion;
 extern crate actix_router;
 extern crate path_router;
@@ -6,7 +5,7 @@ extern crate path_table;
 extern crate path_tree;
 extern crate route_recognizer;
 
-use criterion::{black_box, Benchmark, Criterion};
+use criterion::{Benchmark, Criterion};
 use path_router::Router;
 
 use actix_router::{Path as ActixPath, Router as ActixRouter};
