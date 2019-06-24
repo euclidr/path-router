@@ -32,18 +32,43 @@ impl Default for NodeKind {
     }
 }
 
+/// match result of a path
 #[derive(Debug)]
-struct Match<T> {
-    data: T,
-    params: BTreeMap<String, String>,
+pub struct Match<T> {
+    /// data set in the route
+    pub data: T,
+    /// extracted parameters from the path
+    pub params: BTreeMap<String, String>,
 }
 
-struct Router<T> {
+/// A generic path router
+///
+/// it can route to exact path like `/a/path`
+/// it use prefix `:` to catch parameters in path:
+/// with route `/user/:id/repos` we can get `123` from path `/user/123/repos`
+/// if use prefix `*` to catch all the rest of the path:
+/// with route `/list/*animals` we can get `chicken/duck` from path
+/// `/list/chiken/duct`
+///
+/// # Example
+///
+/// ```
+/// use path_router::Router;
+/// let mut router = Router::default();
+/// router.add("/a/path", 1).unwrap();
+/// router.add("/user/:id/repos", 2).unwrap();
+/// router.add("/list/*animals", 3).unwrap();
+///
+/// assert_eq!(*router.recognize("/a/path").unwrap().data, 1);
+/// assert_eq!(*router.recognize("/user/:id/repos").unwrap().data, 2);
+/// assert_eq!(*router.recognize("/list/*animals").unwrap().data, 3);
+/// ```
+pub struct Router<T> {
     kind: NodeKind,
-    name: String,
+    text: String, // text of static node, empty string if it's wildcard node
     data: Option<T>,
-    params: Vec<String>,
-    normal_children: Vec<Router<T>>,
+    params: Vec<String>, // param or catchall keys of the route, order by their occurrences
+    static_children: Vec<Router<T>>,
     param_child: Box<Option<Router<T>>>,
     catch_all_child: Box<Option<Router<T>>>,
 }
@@ -52,21 +77,21 @@ impl<T> Default for Router<T> {
     fn default() -> Router<T> {
         Router::<T> {
             kind: NodeKind::default(),
-            name: String::from(""),
+            text: String::from(""),
             data: None,
             params: vec![],
-            normal_children: vec![],
+            static_children: vec![],
             param_child: Box::new(None),
             catch_all_child: Box::new(None),
         }
     }
 }
 
-impl<T> std::fmt::Debug for Router<T> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unimplemented!()
-    }
-}
+// impl<T> std::fmt::Debug for Router<T> {
+//     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         unimplemented!()
+//     }
+// }
 
 // Router as node
 impl<T> Router<T> {
@@ -76,7 +101,7 @@ impl<T> Router<T> {
 
     fn new_static_node(segment: &str) -> Router<T> {
         Router {
-            name: segment.to_string(),
+            text: segment.to_string(),
             ..Router::default()
         }
     }
@@ -96,8 +121,8 @@ impl<T> Router<T> {
     }
 
     fn child_index(&self, segment: &str) -> Option<usize> {
-        if let Ok(i) = self.normal_children.binary_search_by(|n| {
-            let name = &(n.name)[..];
+        if let Ok(i) = self.static_children.binary_search_by(|n| {
+            let name = &(n.text)[..];
             name.cmp(segment)
         }) {
             return Some(i);
@@ -156,11 +181,11 @@ impl<T> Router<T> {
         }
 
         if self.child_index(segment).is_none() {
-            self.normal_children.push(Router::new_static_node(segment));
-            self.normal_children.sort_by(|a, b| a.name.cmp(&b.name))
+            self.static_children.push(Router::new_static_node(segment));
+            self.static_children.sort_by(|a, b| a.text.cmp(&b.text))
         }
         let idx = self.child_index(segment).unwrap();
-        return Ok(&mut self.normal_children[idx]);
+        return Ok(&mut self.static_children[idx]);
     }
 
     fn set_data(&mut self, data: T) {
@@ -170,8 +195,13 @@ impl<T> Router<T> {
 
 /// Router as router
 impl<T> Router<T> {
-
-
+    /// set a route with data
+    ///
+    /// a route must start with '/' and have no trailing '/'
+    /// empty text between '/' is not allowed
+    /// empty parameter name or empty catchall name like "/a/:/b" or "/a/*" is not allowed
+    /// catchall must be the last segment if any
+    /// parameter namse and catchall name must not be duplicated
     pub fn add(&mut self, route: &str, data: T) -> Result<&mut T, Error> {
         if !self.is_valid_route(route) {
             return Err(Error::InvalidFormat);
@@ -214,7 +244,10 @@ impl<T> Router<T> {
         }
     }
 
-    pub fn with_base(&mut self, route: &str) -> Result<&mut Router<T>, Error> {
+    /// create a sub route from current route
+    ///
+    /// route must be static, parameters and catch all are not allowed
+    pub fn sub_route(&mut self, route: &str) -> Result<&mut Router<T>, Error> {
         if !self.is_valid_base(route) {
             return Err(Error::InvalidFormat);
         }
@@ -233,6 +266,10 @@ impl<T> Router<T> {
         Ok(last)
     }
 
+    /// recognize a path
+    ///
+    /// path must start with '/'
+    /// path should not have segments like '..', '.'
     pub fn recognize<'a>(&'a self, path: &str) -> Option<Match<&'a T>> {
         let path = {
             if path == "" {
@@ -263,7 +300,7 @@ impl<T> Router<T> {
             }
 
             if let Some(idx) = last.child_index(segment) {
-                last = &last.normal_children[idx];
+                last = &last.static_children[idx];
                 continue;
             }
 
@@ -326,7 +363,7 @@ impl<T> Router<T> {
         let mut result = vec![];
         let mut cur = pre.clone();
         match self.kind {
-            NodeKind::Static => cur.push(self.name.clone()),
+            NodeKind::Static => cur.push(self.text.clone()),
             NodeKind::Param => cur.push(String::from(":")),
             NodeKind::CatchAll => cur.push(String::from("*")),
         }
@@ -335,7 +372,7 @@ impl<T> Router<T> {
             result.push(self.combine_route_parts(&cur, &self.params))
         }
 
-        for node in self.normal_children.iter() {
+        for node in self.static_children.iter() {
             result.append(&mut node.list_sub_routes(&cur));
         }
 
@@ -574,10 +611,10 @@ mod tests {
         let mut router = Router::default();
         build_simple_router(&mut router);
         {
-            let admin = router.with_base("/admin").unwrap();
+            let admin = router.sub_route("/admin").unwrap();
             build_simple_router(admin);
             {
-                let console = admin.with_base("/console").unwrap();
+                let console = admin.sub_route("/console").unwrap();
                 build_simple_router(console);
                 check_with_base(console, "");
             }
