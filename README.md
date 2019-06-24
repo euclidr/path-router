@@ -1,53 +1,36 @@
 # path router
 
-a simple path routing table
+a simple path router for HTTP server
 
-TODO:
+### Features
 
-1. support different wildcard name like ✔
+* support name parameters like `:name` and CatchAll parameters like `*any`
+* support creating sub routers
 
-    ```
-    /user/:id
-    /user/:user_id/repo/:id
-    ```
+### Limitation(current)
 
-    but
+* `*any` must be the last segment in route
 
-    ```
-    /user/:id
-    /user/:user_id
-    ```
+### Usage
 
-    should not be permitted
+```
+extern crate path_router;
+use path_router::Router;
 
-2. prevent same wildcard name in a single route: ✔
+let mut router = Router::default();
+router.add("/a/path", 1).unwrap();
+router.add("/user/:id/repos", 2).unwrap();
+router.add("/user/:user_id/repos/:id", 3).unwrap();
+router.add("/list/*animals", 4).unwrap();
 
-    ```
-    /user/:id/repo/:id // not allowed
-    /:a/*a // not allowed
-    ```
+assert_eq!(*router.recognize("/a/path").unwrap().data, 1);
+assert_eq!(*router.recognize("/user/100/repos").unwrap().data, 2);
+assert_eq!(*router.recognize("/user/100/repos/1").unwrap().data, 3);
+assert_eq!(*router.recognize("/list/*animals").unwrap().data, 4)
+```
 
-3. clean route before recognizing
+### Examples
 
-    ```
-    //a/bb/a/..// => /a/bb
-    ```
+Please read [examples/user](examples/user.rs)
 
-4. route can be chained ✔
 
-    ```
-    admin = route.with_base("/admin")
-    admin.add("/", endpoint)
-    dashboard = admin.with_base("/dashboard")
-    dashboard.add("/temprature, endpoint)
-    ```
-
-5. benchmark
-
-6. middleware?
-
-7. regex?
-
-8. catch_all must be the last one ✔
-
-9. display routes ✔
