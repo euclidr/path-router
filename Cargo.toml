@@ -3,12 +3,17 @@ name = "path-router"
 version = "0.1.0"
 authors = ["Euclidr <euclidry@gmail.com>"]
 edition = "2018"
+description = "Path router for http server"
+repository = "https://github.com/euclidr/path-router"
+documentation = "https://github.com/euclidr/path-router"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 
 [dev-dependencies]
+hyper = "0.12"
 criterion = "0.2"
 actix-router = "^0.1"
 path-table = "^1.0"
@@ -18,3 +23,7 @@ path-tree ="^0.1"
 [[bench]]
 name = "benchmarks"
 harness = false
+
+[[example]]
+name = "user"
+path = "examples/user.rs"
